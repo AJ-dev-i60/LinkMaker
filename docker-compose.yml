@@ -20,6 +20,4 @@ services:
       - CLIENT_X509_CERT_URL=${FIREBASE_CLIENT_CERT_URL}
     volumes:
       - .:/app
-    env_file:
-      - .env
     command: python app.py
