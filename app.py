@@ -106,4 +106,4 @@ def redirect_url(short_code):
     return redirect(doc.to_dict()['long_url'])
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', debug=True)
