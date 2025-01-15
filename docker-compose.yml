@@ -2,7 +2,9 @@ version: '3.8'
 
 services:
   web:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
       - "5000:5000"
     environment:
@@ -18,6 +20,4 @@ services:
       - TOKEN_URI=${FIREBASE_TOKEN_URI}
       - AUTH_PROVIDER_X509_CERT_URL=${FIREBASE_AUTH_PROVIDER_CERT_URL}
       - CLIENT_X509_CERT_URL=${FIREBASE_CLIENT_CERT_URL}
-    volumes:
-      - .:/app
     command: python app.py
