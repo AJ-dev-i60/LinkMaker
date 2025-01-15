@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LinkMaker - URL Shortener</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <h1 class="text-4xl font-bold text-center text-gray-800 mb-8">LinkMaker</h1>
+        
+        <div class="max-w-2xl mx-auto bg-white rounded-lg shadow-md p-6">
+            <div class="mb-4">
+                <input type="url" id="urlInput" 
+                       class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                       placeholder="Enter your URL here">
+            </div>
+            
+            <div class="mb-4">
+                <label for="serviceSelect" class="block text-sm font-medium text-gray-700 mb-2">Select Service</label>
+                <select id="serviceSelect" 
+                        class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="custom">LinkMaker (Default)</option>
+                    <option value="tinyurl">TinyURL</option>
+                    <option value="bitly">Bitly (Coming Soon)</option>
+                    <option value="isgd">Is.gd (Coming Soon)</option>
+                </select>
+            </div>
+
+            <button onclick="shortenUrl()" 
+                    class="w-full bg-blue-500 text-white py-2 px-4 rounded-lg hover:bg-blue-600 transition duration-200">
+                Shorten URL
+            </button>
+
+            <div id="result" class="mt-4 hidden">
+                <div class="p-4 bg-gray-50 rounded-lg">
+                    <p class="text-sm text-gray-600 mb-2">Shortened URL:</p>
+                    <div class="flex items-center">
+                        <input type="text" id="shortUrl" 
+                               class="flex-1 px-4 py-2 border rounded-lg mr-2 focus:outline-none" 
+                               readonly>
+                        <button onclick="copyToClipboard()" 
+                                class="bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600">
+                            Copy
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function shortenUrl() {
+            const urlInput = document.getElementById('urlInput');
+            const serviceSelect = document.getElementById('serviceSelect');
+            const resultDiv = document.getElementById('result');
+            const shortUrlInput = document.getElementById('shortUrl');
+
+            try {
+                const response = await fetch('/shorten', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        url: urlInput.value,
+                        service: serviceSelect.value
+                    }),
+                });
+
+                const data = await response.json();
+                
+                if (data.error) {
+                    alert(data.error);
+                    return;
+                }
+
+                shortUrlInput.value = data.shortened_url;
+                resultDiv.classList.remove('hidden');
+            } catch (error) {
+                alert('Error shortening URL');
+                console.error('Error:', error);
+            }
+        }
+
+        function copyToClipboard() {
+            const shortUrl = document.getElementById('shortUrl');
+            shortUrl.select();
+            document.execCommand('copy');
+            alert('URL copied to clipboard!');
+        }
+    </script>
+</body>
+</html>
