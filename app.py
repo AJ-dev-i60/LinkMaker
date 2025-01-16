@@ -11,6 +11,13 @@ from datetime import datetime
 # Load environment variables
 load_dotenv()
 
+# Validate required environment variables
+base_url = os.getenv('BASE_URL')
+if not base_url:
+    raise ValueError("BASE_URL environment variable is required")
+if base_url.endswith('/'):
+    base_url = base_url.rstrip('/')
+
 app = Flask(__name__)
 
 # Initialize Firebase
@@ -90,7 +97,7 @@ def shorten_url():
         'service': 'custom'
     })
 
-    shortened_url = f"{os.getenv('BASE_URL')}/{short_code}"
+    shortened_url = f"{base_url}/{short_code}"
     return jsonify({'shortened_url': shortened_url})
 
 @app.route('/<short_code>')
