@@ -40,16 +40,21 @@ def generate_short_code(length=6):
 
 def use_external_shortener(url, service='tinyurl'):
     """Use external URL shortening service"""
-    if service == 'tinyurl':
-        s = pyshorteners.Shortener(api_key=os.getenv('TINYURL_API_TOKEN'))
-        return s.tinyurl.short(url)
-    elif service == 'isgd':
-        s = pyshorteners.Shortener()
-        return s.isgd.short(url)
-    elif service == 'bitly':
-        # Requires API key, will be implemented later
-        raise NotImplementedError("Bitly support coming soon")
-    return None
+    try:
+        if service == 'tinyurl':
+            s = pyshorteners.Shortener(api_key=os.getenv('TINYURL_API_TOKEN'))
+            return s.tinyurl.short(url)
+        elif service == 'isgd':
+            s = pyshorteners.Shortener()
+            return s.isgd.short(url)
+        elif service == 'bitly':
+            # Requires API key, will be implemented later
+            raise NotImplementedError("Bitly support coming soon")
+        else:
+            raise ValueError(f"Unsupported service: {service}")
+    except Exception as e:
+        app.logger.error(f"Error shortening URL with {service}: {str(e)}")
+        return None
 
 @app.route('/')
 def index():
@@ -65,13 +70,10 @@ def shorten_url():
         return jsonify({'error': 'URL is required'}), 400
 
     if service != 'custom':
-        try:
-            shortened_url = use_external_shortener(long_url, service)
-            return jsonify({'shortened_url': shortened_url})
-        except NotImplementedError as e:
-            return jsonify({'error': str(e)}), 501
-        except Exception as e:
-            return jsonify({'error': str(e)}), 500
+        shortened_url = use_external_shortener(long_url, service)
+        if shortened_url is None:
+            return jsonify({'error': f'Failed to shorten URL using {service}'}), 500
+        return jsonify({'shortened_url': shortened_url})
 
     # Generate a unique short code
     while True:
