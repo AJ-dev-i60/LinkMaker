@@ -11,10 +11,14 @@ from datetime import datetime
 # Load environment variables
 load_dotenv()
 
-# Validate required environment variables
-base_url = os.getenv('BASE_URL')
-if not base_url:
-    raise ValueError("BASE_URL environment variable is required")
+# Set environment-specific base URL
+FLASK_ENV = os.getenv('FLASK_ENV', 'development')
+if FLASK_ENV == 'development':
+    base_url = 'http://localhost:5000'
+else:
+    base_url = 'https://s.i60.co.za'
+
+# Remove trailing slash if present
 if base_url.endswith('/'):
     base_url = base_url.rstrip('/')
 
