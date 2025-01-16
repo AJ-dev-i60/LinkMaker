@@ -27,23 +27,28 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key')
 
 # Initialize Firebase
-cred = credentials.Certificate({
-    "type": os.getenv('FIREBASE_TYPE'),
-    "project_id": os.getenv('FIREBASE_PROJECT_ID'),
-    "private_key_id": os.getenv('FIREBASE_PRIVATE_KEY_ID'),
-    "private_key": os.getenv('FIREBASE_PRIVATE_KEY').replace('\\n', '\n') if os.getenv('FIREBASE_PRIVATE_KEY') else None,
-    "client_email": os.getenv('FIREBASE_CLIENT_EMAIL'),
-    "client_id": os.getenv('FIREBASE_CLIENT_ID'),
-    "auth_uri": os.getenv('FIREBASE_AUTH_URI'),
-    "token_uri": os.getenv('FIREBASE_TOKEN_URI'),
-    "auth_provider_x509_cert_url": os.getenv('FIREBASE_AUTH_PROVIDER_CERT_URL'),
-    "client_x509_cert_url": os.getenv('FIREBASE_CLIENT_CERT_URL')
-})
+try:
+    app = firebase_admin.get_app()
+except ValueError:
+    private_key = os.getenv('FIREBASE_PRIVATE_KEY')
+    if private_key.startswith('"') and private_key.endswith('"'):
+        private_key = private_key[1:-1]  # Remove surrounding quotes
+    
+    cred = credentials.Certificate({
+        "type": os.getenv('FIREBASE_TYPE'),
+        "project_id": os.getenv('FIREBASE_PROJECT_ID'),
+        "private_key_id": os.getenv('FIREBASE_PRIVATE_KEY_ID'),
+        "private_key": private_key,
+        "client_email": os.getenv('FIREBASE_CLIENT_EMAIL'),
+        "client_id": os.getenv('FIREBASE_CLIENT_ID'),
+        "auth_uri": os.getenv('FIREBASE_AUTH_URI'),
+        "token_uri": os.getenv('FIREBASE_TOKEN_URI'),
+        "auth_provider_x509_cert_url": os.getenv('FIREBASE_AUTH_PROVIDER_CERT_URL'),
+        "client_x509_cert_url": os.getenv('FIREBASE_CLIENT_CERT_URL')
+    })
 
-firebase_admin.initialize_app(cred, {
-    'projectId': os.getenv('FIREBASE_PROJECT_ID'),
-    'storageBucket': f"{os.getenv('FIREBASE_PROJECT_ID')}.firebasestorage.app"
-})
+    firebase_admin.initialize_app(cred)
+
 db = firestore.client()
 
 def generate_short_code(length=6):
@@ -80,17 +85,38 @@ def get_firebase_config():
 def require_auth(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        app.logger.info('Starting authentication check')
         auth_header = request.headers.get('Authorization')
-        if not auth_header or not auth_header.startswith('Bearer '):
+        
+        if not auth_header:
+            app.logger.error('No Authorization header found')
             return jsonify({'error': 'No token provided'}), 401
+            
+        if not auth_header.startswith('Bearer '):
+            app.logger.error('Authorization header does not start with Bearer')
+            return jsonify({'error': 'Invalid token format'}), 401
         
         id_token = auth_header.split('Bearer ')[1]
+        app.logger.info(f'Got token from header (length: {len(id_token)})')
+        
         try:
+            app.logger.info('Verifying token...')
+            # Get current server time
+            current_time = datetime.now()
+            app.logger.info(f'Current server time: {current_time.isoformat()}')
+            
             decoded_token = auth.verify_id_token(id_token)
+            token_issued_at = datetime.fromtimestamp(decoded_token['iat'])
+            token_expires_at = datetime.fromtimestamp(decoded_token['exp'])
+            app.logger.info(f'Token issued at: {token_issued_at.isoformat()}')
+            app.logger.info(f'Token expires at: {token_expires_at.isoformat()}')
+            
             request.user = decoded_token
+            app.logger.info(f'Token verified for user: {decoded_token.get("email", "unknown")}')
             return f(*args, **kwargs)
         except Exception as e:
-            return jsonify({'error': 'Invalid token'}), 401
+            app.logger.error(f'Authentication error: {str(e)}')
+            return jsonify({'error': str(e)}), 401
     return decorated_function
 
 @app.route('/login')
@@ -111,7 +137,7 @@ def shorten_url():
     data = request.get_json()
     long_url = data.get('url')
     service = data.get('service', 'custom')
-    expires_at = data.get('expires_at')
+    expiry = data.get('expiry')
     
     if not long_url:
         return jsonify({'error': 'URL is required'}), 400
@@ -129,6 +155,29 @@ def shorten_url():
         if not doc_ref.get().exists:
             break
 
+    # Calculate expiry time if provided
+    expires_at = None
+    if expiry:
+        try:
+            # Parse the expiry string (e.g., "30 minutes" or "2 hours")
+            value, unit = expiry.split()
+            value = int(value)
+            now = datetime.now()
+            
+            if 'minute' in unit:
+                expires_at = now.replace(minute=now.minute + value)
+            elif 'hour' in unit:
+                expires_at = now.replace(hour=now.hour + value)
+            elif 'day' in unit:
+                expires_at = now.replace(day=now.day + value)
+            elif 'week' in unit:
+                expires_at = now.replace(day=now.day + (value * 7))
+            
+            expires_at = expires_at.isoformat()
+        except Exception as e:
+            app.logger.error(f"Error parsing expiry time: {str(e)}")
+            return jsonify({'error': 'Invalid expiry format'}), 400
+
     # Store in Firebase with user information and expiry
     doc_data = {
         'long_url': long_url,
@@ -140,11 +189,9 @@ def shorten_url():
             'email': request.user['email'],
             'display_name': request.user.get('name', ''),
         },
-        'last_visited': None
+        'last_visited': None,
+        'expires_at': expires_at
     }
-
-    if expires_at:
-        doc_data['expires_at'] = expires_at
 
     doc_ref.set(doc_data)
 
@@ -163,13 +210,19 @@ def redirect_url(short_code):
         url_data = doc.to_dict()
 
         # Check if link has expired
-        if url_data.get('expires_at'):
-            expiry_time = datetime.fromisoformat(url_data['expires_at'])
-            if datetime.now() > expiry_time:
-                return render_template('invalid_link.html', 
-                                     firebase_config=get_firebase_config(), 
-                                     message="This link has expired")
+        expires_at = url_data.get('expires_at')
+        if expires_at and expires_at != 'never':
+            try:
+                expiry_time = datetime.fromisoformat(expires_at)
+                if datetime.now() > expiry_time:
+                    return render_template('invalid_link.html', 
+                                         firebase_config=get_firebase_config(), 
+                                         message="This link has expired")
+            except ValueError as e:
+                app.logger.error(f"Error parsing expiry time: {str(e)}")
+                # Continue with redirect even if expiry time is invalid
         
+        # Update visit count and last visited timestamp
         doc_ref.update({
             'visits': firestore.Increment(1),
             'last_visited': datetime.now().isoformat()
@@ -178,12 +231,15 @@ def redirect_url(short_code):
         return redirect(url_data['long_url'])
     except Exception as e:
         app.logger.error(f"Error redirecting URL: {str(e)}")
-        return render_template('invalid_link.html', firebase_config=get_firebase_config())
+        return render_template('invalid_link.html', 
+                             firebase_config=get_firebase_config(),
+                             message="An error occurred while processing this link")
 
 @app.route('/api/my-links', methods=['GET'])
 @require_auth
 def get_user_links():
     try:
+        app.logger.info(f'Fetching links for user: {request.user.get("email", "unknown")}')
         # Query links created by the current user
         links = db.collection('urls')\
             .where('created_by.uid', '==', request.user['uid'])\
@@ -195,6 +251,7 @@ def get_user_links():
         
         for link in links:
             data = link.to_dict()
+            app.logger.debug(f'Processing link: {link.id}')
             expires_at = data.get('expires_at')
             is_expired = False
             
@@ -213,10 +270,11 @@ def get_user_links():
                 'is_expired': is_expired
             })
 
+        app.logger.info(f'Successfully fetched {len(links_data)} links')
         return jsonify(links_data)
     except Exception as e:
         app.logger.error(f"Error fetching user links: {str(e)}")
-        return jsonify({'error': 'Failed to fetch links'}), 500
+        return jsonify({'error': f'Failed to fetch links: {str(e)}'}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', debug=True)
