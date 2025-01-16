@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LinkMaker - Sign In</title>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center">
+    <div class="bg-white p-8 rounded-lg shadow-md w-96">
+        <h2 class="text-2xl font-bold mb-6 text-center text-gray-800">Welcome to LinkMaker</h2>
+        
+        <!-- Auth Status Message -->
+        <div id="authMessage" class="mb-4 text-sm text-center hidden"></div>
+
+        <!-- Sign In Form -->
+        <form id="signInForm" class="space-y-4">
+            <div>
+                <label class="block text-gray-700 text-sm font-bold mb-2" for="email">Email</label>
+                <input type="email" id="email" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:border-blue-500" required>
+            </div>
+            <div>
+                <label class="block text-gray-700 text-sm font-bold mb-2" for="password">Password</label>
+                <input type="password" id="password" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:border-blue-500" required>
+            </div>
+            <button type="submit" class="w-full bg-blue-500 text-white py-2 px-4 rounded-md hover:bg-blue-600 transition duration-200">Sign In</button>
+        </form>
+
+        <!-- Google Sign In -->
+        <div class="mt-4">
+            <button id="googleSignIn" class="w-full bg-white border border-gray-300 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-50 transition duration-200 flex items-center justify-center">
+                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="w-5 h-5 mr-2" alt="Google logo">
+                Sign in with Google
+            </button>
+        </div>
+
+        <!-- Toggle Sign In/Up -->
+        <p class="mt-4 text-center text-sm text-gray-600">
+            <span id="toggleText">Don't have an account?</span>
+            <a href="#" id="toggleAuth" class="text-blue-500 hover:text-blue-600">Sign Up</a>
+        </p>
+    </div>
+
+    <script>
+        // Firebase configuration
+        const firebaseConfig = {
+            apiKey: "{{ firebase_api_key }}",
+            authDomain: "{{ firebase_auth_domain }}",
+            projectId: "{{ firebase_project_id }}",
+            appId: "{{ firebase_app_id }}"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const app = firebase.app();
+        const auth = firebase.auth(app);
+
+        // DOM elements
+        const signInForm = document.getElementById('signInForm');
+        const googleSignIn = document.getElementById('googleSignIn');
+        const toggleAuth = document.getElementById('toggleAuth');
+        const toggleText = document.getElementById('toggleText');
+        const authMessage = document.getElementById('authMessage');
+
+        let isSignIn = true;
+
+        // Toggle between sign in and sign up
+        toggleAuth.addEventListener('click', (e) => {
+            e.preventDefault();
+            isSignIn = !isSignIn;
+            toggleText.textContent = isSignIn ? "Don't have an account?" : "Already have an account?";
+            toggleAuth.textContent = isSignIn ? "Sign Up" : "Sign In";
+            signInForm.querySelector('button[type="submit"]').textContent = isSignIn ? "Sign In" : "Sign Up";
+        });
+
+        // Handle form submission
+        signInForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+
+            try {
+                if (isSignIn) {
+                    await auth.signInWithEmailAndPassword(email, password);
+                } else {
+                    await auth.createUserWithEmailAndPassword(email, password);
+                }
+                window.location.href = '/';
+            } catch (error) {
+                showAuthMessage(error.message, true);
+            }
+        });
+
+        // Google Sign In
+        googleSignIn.addEventListener('click', async () => {
+            const provider = new firebase.auth.GoogleAuthProvider();
+            try {
+                await auth.signInWithPopup(provider);
+                window.location.href = '/';
+            } catch (error) {
+                showAuthMessage(error.message, true);
+            }
+        });
+
+        // Show auth message
+        function showAuthMessage(message, isError = false) {
+            authMessage.textContent = message;
+            authMessage.className = `mb-4 text-sm text-center ${isError ? 'text-red-500' : 'text-green-500'}`;
+            authMessage.classList.remove('hidden');
+        }
+
+        // Check auth state
+        auth.onAuthStateChanged((user) => {
+            if (user) {
+                // If we're on the login page and already authenticated, redirect to home
+                if (window.location.pathname === '/login') {
+                    window.location.href = '/';
+                }
+            }
+        });
+    </script>
+</body>
+</html>

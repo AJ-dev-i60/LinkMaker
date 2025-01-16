@@ -5,11 +5,29 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LinkMaker - URL Shortener</title>
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 </head>
 <body class="bg-gray-100 min-h-screen">
+    <!-- Navigation Bar -->
+    <nav class="bg-white shadow-lg">
+        <div class="container mx-auto px-4 py-3">
+            <div class="flex justify-between items-center">
+                <h1 class="text-2xl font-bold text-gray-800">i60 LinkMaker</h1>
+                <div class="flex items-center space-x-4">
+                    <span id="userEmail" class="text-gray-600 hidden"></span>
+                    <button id="authButton" class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600">
+                        Sign In
+                    </button>
+                    <button id="signOutButton" class="hidden bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600">
+                        Sign Out
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
     <div class="container mx-auto px-4 py-8">
-        <h1 class="text-4xl font-bold text-center text-gray-800 mb-8">i60 LinkMaker</h1>
-        
         <div class="max-w-2xl mx-auto bg-white rounded-lg shadow-md p-6">
             <div class="mb-4">
                 <input type="url" id="urlInput" 
@@ -28,6 +46,31 @@
                 </select>
             </div>
 
+            <div class="mb-4">
+                <div class="flex items-center space-x-2 mt-4">
+                    <input type="checkbox" id="expiryEnabled" class="rounded text-blue-500">
+                    <label for="expiryEnabled" class="text-gray-700">Enable link expiry</label>
+                    
+                    <select id="expiryPreset" class="ml-4 px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 hidden">
+                        <option value="">Select time</option>
+                        <option value="15">15 minutes</option>
+                        <option value="60">1 hour</option>
+                        <option value="360">6 hours</option>
+                        <option value="1440">24 hours</option>
+                        <option value="custom">Custom</option>
+                    </select>
+                    
+                    <input type="number" id="customTime" min="1" 
+                           class="w-24 px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 hidden" 
+                           placeholder="Time">
+                    <select id="customUnit" class="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 hidden">
+                        <option value="minutes">Minutes</option>
+                        <option value="hours">Hours</option>
+                        <option value="days">Days</option>
+                    </select>
+                </div>
+            </div>
+
             <button onclick="shortenUrl()" 
                     class="w-full bg-blue-500 text-white py-2 px-4 rounded-lg hover:bg-blue-600 transition duration-200">
                 Shorten URL
@@ -40,32 +83,123 @@
                         <input type="text" id="shortUrl" 
                                class="flex-1 px-4 py-2 border rounded-lg mr-2 focus:outline-none" 
                                readonly>
-                        <button onclick="copyToClipboard()" 
-                                class="bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600">
-                            Copy
+                        <button id="copyButton" onclick="copyToClipboard()" 
+                                class="bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition-all duration-300 flex items-center">
+                            <span id="copyText">Copy</span>
+                            <svg id="checkmark" class="w-5 h-5 ml-1 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                            </svg>
                         </button>
                     </div>
                 </div>
             </div>
         </div>
+
+        <!-- User's Links Table -->
+        <div id="userLinksSection" class="mt-8 bg-white rounded-lg shadow-md p-6 hidden">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">Your Links</h2>
+            <div class="overflow-x-auto">
+                <table class="min-w-full table-auto">
+                    <thead>
+                        <tr class="bg-gray-50">
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Short URL</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Original URL</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Visits</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Last Visit</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Expires</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="userLinksTable" class="bg-white divide-y divide-gray-200">
+                        <!-- Links will be inserted here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
     </div>
 
     <script>
+        // Initialize Firebase
+        const firebaseConfig = {
+            apiKey: "{{ firebase_config.apiKey }}",
+            authDomain: "{{ firebase_config.authDomain }}",
+            projectId: "{{ firebase_config.projectId }}",
+            appId: "{{ firebase_config.appId }}"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+
+        // Auth elements
+        const authButton = document.getElementById('authButton');
+        const signOutButton = document.getElementById('signOutButton');
+        const userEmail = document.getElementById('userEmail');
+
+        // Auth state observer
+        auth.onAuthStateChanged((user) => {
+            if (user) {
+                userEmail.textContent = user.email;
+                userEmail.classList.remove('hidden');
+                authButton.classList.add('hidden');
+                signOutButton.classList.remove('hidden');
+                fetchUserLinks(); // Fetch links when user is authenticated
+            } else {
+                userEmail.classList.add('hidden');
+                authButton.classList.remove('hidden');
+                signOutButton.classList.add('hidden');
+                document.getElementById('userLinksSection').classList.add('hidden');
+            }
+        });
+
+        // Auth button click handlers
+        authButton.addEventListener('click', () => {
+            window.location.href = '/login';
+        });
+
+        signOutButton.addEventListener('click', () => {
+            auth.signOut().then(() => {
+                window.location.reload();
+            }).catch((error) => {
+                console.error('Sign out error:', error);
+            });
+        });
+
         async function shortenUrl() {
             const urlInput = document.getElementById('urlInput');
             const serviceSelect = document.getElementById('serviceSelect');
             const resultDiv = document.getElementById('result');
             const shortUrlInput = document.getElementById('shortUrl');
+            const expiryEnabled = document.getElementById('expiryEnabled');
+            const expiryPreset = document.getElementById('expiryPreset');
+            const customTime = document.getElementById('customTime');
+            const customUnit = document.getElementById('customUnit');
 
             try {
+                // Get the current user's ID token
+                const user = auth.currentUser;
+                if (!user) {
+                    window.location.href = '/login';
+                    return;
+                }
+
+                const idToken = await user.getIdToken();
+
+                const expiry = expiryEnabled.checked ? 
+                    expiryPreset.value === 'custom' ? 
+                        `${customTime.value} ${customUnit.value}` : 
+                        `${expiryPreset.value} minutes` : 
+                    null;
+
                 const response = await fetch('/shorten', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${idToken}`
                     },
                     body: JSON.stringify({
                         url: urlInput.value,
-                        service: serviceSelect.value
+                        service: serviceSelect.value,
+                        expiry: expiry
                     }),
                 });
 
@@ -78,18 +212,258 @@
 
                 shortUrlInput.value = data.shortened_url;
                 resultDiv.classList.remove('hidden');
+                await fetchUserLinks(); // Add await here and ensure it refreshes after creating a link
             } catch (error) {
-                alert('Error shortening URL');
-                console.error('Error:', error);
+                if (error.message.includes('401')) {
+                    window.location.href = '/login';
+                } else {
+                    alert('Error shortening URL');
+                    console.error('Error:', error);
+                }
             }
         }
 
+        // Fetch and display user's links
+        async function fetchUserLinks() {
+            try {
+                const user = auth.currentUser;
+                if (!user) {
+                    document.getElementById('userLinksSection').classList.add('hidden');
+                    return;
+                }
+
+                const idToken = await user.getIdToken();
+                const response = await fetch('/api/my-links', {
+                    headers: {
+                        'Authorization': `Bearer ${idToken}`
+                    }
+                });
+
+                const links = await response.json();
+                if (links.error) {
+                    console.error('Error fetching links:', links.error);
+                    return;
+                }
+
+                displayUserLinks(links);
+                document.getElementById('userLinksSection').classList.remove('hidden');
+            } catch (error) {
+                console.error('Error fetching links:', error);
+                document.getElementById('userLinksSection').classList.add('hidden');
+            }
+        }
+
+        function displayUserLinks(links) {
+            const tableBody = document.getElementById('userLinksTable');
+            const now = new Date();
+            
+            if (!links || links.length === 0) {
+                tableBody.innerHTML = `
+                    <tr>
+                        <td colspan="7" class="px-6 py-4 text-center text-gray-500">
+                            No links created yet
+                        </td>
+                    </tr>`;
+            } else {
+                tableBody.innerHTML = links.map(link => `
+                    <tr class="${link.is_expired ? 'bg-red-50' : ''}">
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <div class="flex items-center space-x-2">
+                                <button onclick="copyWithConfirmation('${link.short_url}', this)" 
+                                        class="text-gray-400 hover:text-gray-600 transition-colors duration-200"
+                                        title="Copy short link">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                                    </svg>
+                                    <svg class="w-4 h-4 text-green-500 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                    </svg>
+                                </button>
+                                <a href="${link.short_url}" class="text-blue-600 hover:text-blue-800 ${link.is_expired ? 'line-through' : ''}" 
+                                   target="_blank" ${link.is_expired ? 'onclick="return false"' : ''}>
+                                    ${link.short_url}
+                                </a>
+                            </div>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <div class="flex items-center space-x-2">
+                                <button onclick="copyWithConfirmation('${link.long_url}', this)" 
+                                        class="text-gray-400 hover:text-gray-600 transition-colors duration-200"
+                                        title="Copy full link">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                                    </svg>
+                                    <svg class="w-4 h-4 text-green-500 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                    </svg>
+                                </button>
+                                <div class="max-w-xs truncate" title="${link.long_url}">
+                                    ${link.long_url}
+                                </div>
+                            </div>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-gray-500">
+                            ${link.visits}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-gray-500">
+                            ${new Date(link.created_at).toLocaleDateString()}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-gray-500">
+                            ${link.last_visited === 'Never' ? 'Never' : new Date(link.last_visited).toLocaleDateString()}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            ${link.expires_at ? 
+                                `<span class="${link.is_expired ? 'text-red-500' : 'text-gray-500'}">
+                                    ${link.is_expired ? 'Expired' : `
+                                        <div>${new Date(link.expires_at).toLocaleString()}</div>
+                                        <div class="text-xs text-gray-400">
+                                            ${getTimeRemaining(new Date(link.expires_at), now)}
+                                        </div>
+                                    `}
+                                </span>` : 
+                                '<span class="text-gray-400">Never</span>'}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            ${!link.is_expired ? 
+                                `<div class="relative">
+                                    <button onclick="toggleCopyDropdown('${link.id}')" 
+                                            class="text-gray-600 hover:text-gray-900 focus:outline-none">
+                                        Copy
+                                    </button>
+                                    <div id="copyDropdown-${link.id}" 
+                                         class="hidden absolute right-0 mt-2 py-2 w-48 bg-white rounded-lg shadow-xl z-10">
+                                        <button onclick="copyLinkOption('${link.short_url}')" 
+                                                class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left">
+                                            Copy Short Link
+                                        </button>
+                                        <button onclick="copyLinkOption('${link.long_url}')" 
+                                                class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left">
+                                            Copy Full Link
+                                        </button>
+                                    </div>
+                                </div>` :
+                                '<span class="text-red-500">Expired</span>'}
+                        </td>
+                    </tr>
+                `).join('');
+
+                // Close dropdowns when clicking outside
+                document.addEventListener('click', function(event) {
+                    const dropdowns = document.querySelectorAll('[id^="copyDropdown-"]');
+                    dropdowns.forEach(dropdown => {
+                        if (!event.target.closest('.relative')) {
+                            dropdown.classList.add('hidden');
+                        }
+                    });
+                });
+            }
+        }
+
+        function getTimeRemaining(expiryDate, now) {
+            const diff = expiryDate - now;
+            if (diff <= 0) return 'Expired';
+            
+            const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+            const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+            const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+            
+            if (days > 0) return `${days}d ${hours}h remaining`;
+            if (hours > 0) return `${hours}h ${minutes}m remaining`;
+            return `${minutes}m remaining`;
+        }
+
+        function toggleCopyDropdown(linkId) {
+            const dropdown = document.getElementById(`copyDropdown-${linkId}`);
+            const allDropdowns = document.querySelectorAll('[id^="copyDropdown-"]');
+            
+            // Hide all other dropdowns
+            allDropdowns.forEach(d => {
+                if (d.id !== `copyDropdown-${linkId}`) {
+                    d.classList.add('hidden');
+                }
+            });
+            
+            dropdown.classList.toggle('hidden');
+        }
+
+        function copyLinkOption(url) {
+            const tempInput = document.createElement('input');
+            tempInput.value = url;
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            document.execCommand('copy');
+            document.body.removeChild(tempInput);
+            
+            // Hide all dropdowns
+            const dropdowns = document.querySelectorAll('[id^="copyDropdown-"]');
+            dropdowns.forEach(dropdown => dropdown.classList.add('hidden'));
+        }
+
+        function copyWithConfirmation(text, buttonElement) {
+            const copyIcon = buttonElement.querySelector('svg:first-child');
+            const checkIcon = buttonElement.querySelector('svg:last-child');
+            
+            // Copy the text
+            const tempInput = document.createElement('input');
+            tempInput.value = text;
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            document.execCommand('copy');
+            document.body.removeChild(tempInput);
+            
+            // Show confirmation
+            copyIcon.classList.add('hidden');
+            checkIcon.classList.remove('hidden');
+            
+            // Reset after 2 seconds
+            setTimeout(() => {
+                copyIcon.classList.remove('hidden');
+                checkIcon.classList.add('hidden');
+            }, 2000);
+        }
+
+        // Update main copy button functionality
         function copyToClipboard() {
             const shortUrl = document.getElementById('shortUrl');
+            const copyButton = document.getElementById('copyButton');
+            const copyText = document.getElementById('copyText');
+            const checkmark = document.getElementById('checkmark');
+            
             shortUrl.select();
             document.execCommand('copy');
-            alert('URL copied to clipboard!');
+            
+            // Change button appearance
+            copyButton.classList.remove('bg-gray-500', 'hover:bg-gray-600');
+            copyButton.classList.add('bg-green-500');
+            copyText.classList.add('hidden');
+            checkmark.classList.remove('hidden');
+            
+            // Reset after 2 seconds
+            setTimeout(() => {
+                copyButton.classList.remove('bg-green-500');
+                copyButton.classList.add('bg-gray-500', 'hover:bg-gray-600');
+                copyText.classList.remove('hidden');
+                checkmark.classList.add('hidden');
+            }, 2000);
         }
+
+        // Add event listeners for expiry options
+        document.getElementById('expiryEnabled').addEventListener('change', function() {
+            const preset = document.getElementById('expiryPreset');
+            preset.classList.toggle('hidden', !this.checked);
+            if (!this.checked) {
+                document.getElementById('customTime').classList.add('hidden');
+                document.getElementById('customUnit').classList.add('hidden');
+            }
+        });
+
+        document.getElementById('expiryPreset').addEventListener('change', function() {
+            const customTime = document.getElementById('customTime');
+            const customUnit = document.getElementById('customUnit');
+            const isCustom = this.value === 'custom';
+            customTime.classList.toggle('hidden', !isCustom);
+            customUnit.classList.toggle('hidden', !isCustom);
+        });
     </script>
 </body>
 </html>

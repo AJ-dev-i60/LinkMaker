@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, render_template, redirect
+from functools import wraps
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, firestore, auth
 import os
 from dotenv import load_dotenv
 import string
@@ -23,6 +24,7 @@ if base_url.endswith('/'):
     base_url = base_url.rstrip('/')
 
 app = Flask(__name__)
+app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key')
 
 # Initialize Firebase
 cred = credentials.Certificate({
@@ -67,15 +69,49 @@ def use_external_shortener(url, service='tinyurl'):
         app.logger.error(f"Error shortening URL with {service}: {str(e)}")
         return None
 
+def get_firebase_config():
+    return {
+        'apiKey': os.getenv('FIREBASE_API_KEY'),
+        'authDomain': os.getenv('FIREBASE_AUTH_DOMAIN'),
+        'projectId': os.getenv('FIREBASE_PROJECT_ID'),
+        'appId': os.getenv('FIREBASE_APP_ID')
+    }
+
+def require_auth(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'No token provided'}), 401
+        
+        id_token = auth_header.split('Bearer ')[1]
+        try:
+            decoded_token = auth.verify_id_token(id_token)
+            request.user = decoded_token
+            return f(*args, **kwargs)
+        except Exception as e:
+            return jsonify({'error': 'Invalid token'}), 401
+    return decorated_function
+
+@app.route('/login')
+def login():
+    return render_template('login.html',
+                         firebase_api_key=os.getenv('FIREBASE_API_KEY'),
+                         firebase_auth_domain=os.getenv('FIREBASE_AUTH_DOMAIN'),
+                         firebase_project_id=os.getenv('FIREBASE_PROJECT_ID'),
+                         firebase_app_id=os.getenv('FIREBASE_APP_ID'))
+
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return render_template('index.html', firebase_config=get_firebase_config())
 
 @app.route('/shorten', methods=['POST'])
+@require_auth
 def shorten_url():
     data = request.get_json()
     long_url = data.get('url')
     service = data.get('service', 'custom')
+    expires_at = data.get('expires_at')
     
     if not long_url:
         return jsonify({'error': 'URL is required'}), 400
@@ -93,30 +129,94 @@ def shorten_url():
         if not doc_ref.get().exists:
             break
 
-    # Store in Firebase
-    doc_ref.set({
+    # Store in Firebase with user information and expiry
+    doc_data = {
         'long_url': long_url,
         'created_at': datetime.now().isoformat(),
         'visits': 0,
-        'service': 'custom'
-    })
+        'service': 'custom',
+        'created_by': {
+            'uid': request.user['uid'],
+            'email': request.user['email'],
+            'display_name': request.user.get('name', ''),
+        },
+        'last_visited': None
+    }
+
+    if expires_at:
+        doc_data['expires_at'] = expires_at
+
+    doc_ref.set(doc_data)
 
     shortened_url = f"{base_url}/{short_code}"
     return jsonify({'shortened_url': shortened_url})
 
 @app.route('/<short_code>')
 def redirect_url(short_code):
-    doc_ref = db.collection('urls').document(short_code)
-    doc = doc_ref.get()
-    
-    if not doc.exists:
-        return render_template('error.html', message='Link not found'), 404
+    try:
+        doc_ref = db.collection('urls').document(short_code)
+        doc = doc_ref.get()
+        
+        if not doc.exists:
+            return render_template('invalid_link.html', firebase_config=get_firebase_config())
+        
+        url_data = doc.to_dict()
 
-    # Update visit count
-    doc_ref.update({'visits': firestore.Increment(1)})
-    
-    # Redirect to the original URL
-    return redirect(doc.to_dict()['long_url'])
+        # Check if link has expired
+        if url_data.get('expires_at'):
+            expiry_time = datetime.fromisoformat(url_data['expires_at'])
+            if datetime.now() > expiry_time:
+                return render_template('invalid_link.html', 
+                                     firebase_config=get_firebase_config(), 
+                                     message="This link has expired")
+        
+        doc_ref.update({
+            'visits': firestore.Increment(1),
+            'last_visited': datetime.now().isoformat()
+        })
+        
+        return redirect(url_data['long_url'])
+    except Exception as e:
+        app.logger.error(f"Error redirecting URL: {str(e)}")
+        return render_template('invalid_link.html', firebase_config=get_firebase_config())
+
+@app.route('/api/my-links', methods=['GET'])
+@require_auth
+def get_user_links():
+    try:
+        # Query links created by the current user
+        links = db.collection('urls')\
+            .where('created_by.uid', '==', request.user['uid'])\
+            .order_by('created_at', direction=firestore.Query.DESCENDING)\
+            .stream()
+
+        links_data = []
+        now = datetime.now()
+        
+        for link in links:
+            data = link.to_dict()
+            expires_at = data.get('expires_at')
+            is_expired = False
+            
+            if expires_at:
+                expiry_time = datetime.fromisoformat(expires_at)
+                is_expired = now > expiry_time
+
+            links_data.append({
+                'id': link.id,
+                'short_url': f"{base_url}/{link.id}",
+                'long_url': data['long_url'],
+                'visits': data['visits'],
+                'created_at': data['created_at'],
+                'last_visited': data['last_visited'] or 'Never',
+                'expires_at': expires_at,
+                'is_expired': is_expired
+            })
+
+        return jsonify(links_data)
+    except Exception as e:
+        app.logger.error(f"Error fetching user links: {str(e)}")
+        return jsonify({'error': 'Failed to fetch links'}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', debug=True)
