@@ -12,6 +12,20 @@ from datetime import datetime, timedelta
 # Load environment variables
 load_dotenv()
 
+# Validate required environment variables
+required_firebase_vars = [
+    'FIREBASE_API_KEY',
+    'FIREBASE_AUTH_DOMAIN',
+    'FIREBASE_PROJECT_ID',
+    'FIREBASE_STORAGE_BUCKET',
+    'FIREBASE_MESSAGING_SENDER_ID',
+    'FIREBASE_APP_ID'
+]
+
+missing_vars = [var for var in required_firebase_vars if not os.getenv(var)]
+if missing_vars:
+    raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
+
 # Set environment-specific base URL
 FLASK_ENV = os.getenv('FLASK_ENV', 'development')
 if FLASK_ENV == 'development':
@@ -75,14 +89,21 @@ def use_external_shortener(url, service='tinyurl'):
 
 def get_firebase_config():
     """Get Firebase configuration for frontend."""
-    return {
-        'FIREBASE_API_KEY': os.getenv('FIREBASE_API_KEY'),
-        'FIREBASE_AUTH_DOMAIN': os.getenv('FIREBASE_AUTH_DOMAIN'),
-        'FIREBASE_PROJECT_ID': os.getenv('FIREBASE_PROJECT_ID'),
-        'FIREBASE_STORAGE_BUCKET': os.getenv('FIREBASE_STORAGE_BUCKET'),
-        'FIREBASE_MESSAGING_SENDER_ID': os.getenv('FIREBASE_MESSAGING_SENDER_ID'),
-        'FIREBASE_APP_ID': os.getenv('FIREBASE_APP_ID')
+    config = {
+        'apiKey': os.getenv('FIREBASE_API_KEY'),
+        'authDomain': os.getenv('FIREBASE_AUTH_DOMAIN'),
+        'projectId': os.getenv('FIREBASE_PROJECT_ID'),
+        'storageBucket': os.getenv('FIREBASE_STORAGE_BUCKET'),
+        'messagingSenderId': os.getenv('FIREBASE_MESSAGING_SENDER_ID'),
+        'appId': os.getenv('FIREBASE_APP_ID')
     }
+    
+    # Validate that none of the values are None
+    none_values = [k for k, v in config.items() if v is None]
+    if none_values:
+        raise ValueError(f"Firebase configuration contains None values for: {', '.join(none_values)}")
+        
+    return config
 
 def require_auth(f):
     @wraps(f)
@@ -102,15 +123,21 @@ def require_auth(f):
 
 @app.route('/login')
 def login():
-    """Render the login page."""
-    firebase_config = get_firebase_config()
-    return render_template('login.html', firebase_config=firebase_config)
+    """Render the login page with Firebase config."""
+    try:
+        firebase_config = get_firebase_config()
+        return render_template('login.html', firebase_config=firebase_config)
+    except ValueError as e:
+        return f"Configuration Error: {str(e)}", 500
 
 @app.route('/')
 def index():
-    """Render the main page."""
-    firebase_config = get_firebase_config()
-    return render_template('index.html', firebase_config=firebase_config)
+    """Render the main page with Firebase config."""
+    try:
+        firebase_config = get_firebase_config()
+        return render_template('index.html', firebase_config=firebase_config)
+    except ValueError as e:
+        return f"Configuration Error: {str(e)}", 500
 
 @app.route('/api/links', methods=['GET'])
 @require_auth
