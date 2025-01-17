@@ -7,6 +7,31 @@
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <style>
+        .loading-spinner {
+            border: 3px solid #f3f3f3;
+            border-radius: 50%;
+            border-top: 3px solid #3b82f6;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .fade-out {
+            animation: fadeOut 0.5s;
+            animation-fill-mode: forwards;
+        }
+
+        @keyframes fadeOut {
+            from { opacity: 1; }
+            to { opacity: 0; }
+        }
+    </style>
 </head>
 <body class="bg-gray-100 min-h-screen">
     <!-- Navigation Bar -->
@@ -85,10 +110,14 @@
                         <input type="text" id="shortUrl" 
                                class="flex-1 px-4 py-2 border rounded-lg mr-2 focus:outline-none" 
                                readonly>
-                        <button id="copyButton" onclick="copyToClipboard()" 
-                                class="bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition-all duration-300 flex items-center">
-                            <span id="copyText">Copy</span>
-                            <svg id="checkmark" class="hidden h-5 w-5 ml-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                        <button id="copyButton" onclick="copyShortUrl()" 
+                                class="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-400 flex items-center">
+                            <span>Copy</span>
+                            <svg id="checkmark" class="h-5 w-5 ml-2 copy-icon" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z"></path>
+                                <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z"></path>
+                            </svg>
+                            <svg class="h-5 w-5 ml-2 check-icon hidden text-green-500" fill="currentColor" viewBox="0 0 20 20">
                                 <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
                             </svg>
                         </button>
@@ -99,174 +128,243 @@
     </div>
 
     <div class="px-4 py-8">
-        <div id="previousLinks" class="hidden">
-            <h2 class="text-xl font-semibold text-gray-800 mb-4">Your Previous Links</h2>
-            <div class="bg-white rounded-lg shadow-md overflow-hidden">
-                <div class="overflow-x-auto">
-                    <table class="min-w-full">
-                        <thead class="bg-gray-100">
-                            <tr>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Original URL</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Shortened URL</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Expires</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="previousLinksBody" class="divide-y divide-gray-200">
-                            <!-- Links will be dynamically inserted here -->
-                        </tbody>
-                    </table>
+        <div id="linksTableContainer" class="mt-8">
+            <div id="loadingSpinner" class="flex justify-center items-center py-12 hidden">
+                <div class="loading-spinner"></div>
+                <span class="ml-3 text-gray-600">Loading your links...</span>
+            </div>
+            <div id="previousLinks" class="hidden">
+                <h2 class="text-xl font-semibold text-gray-800 mb-4">Your Previous Links</h2>
+                <div class="bg-white rounded-lg shadow-md overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table id="linksTable" class="min-w-full divide-y divide-gray-200 hidden">
+                            <thead class="bg-gray-100">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Original URL</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Shortened URL</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Expires</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="previousLinksBody" class="divide-y divide-gray-200">
+                                <!-- Links will be dynamically inserted here -->
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
     <script>
-        // Initialize Firebase
+        // Global auth state
+        let globalAuthState = {
+            user: null,
+            token: null,
+            isAuthenticated: false
+        };
+
+        // Global copy functions
+        async function handleCopy(text, button) {
+            try {
+                await navigator.clipboard.writeText(text);
+                
+                const copyIcon = button.querySelector('.copy-icon');
+                const checkIcon = button.querySelector('.check-icon');
+                
+                if (copyIcon && checkIcon) {
+                    // Show success state
+                    copyIcon.classList.add('hidden');
+                    checkIcon.classList.remove('hidden');
+                    button.classList.remove('text-gray-400', 'hover:text-gray-600');
+                    button.classList.add('text-green-500');
+                    
+                    // Reset after 2 seconds
+                    setTimeout(() => {
+                        copyIcon.classList.remove('hidden');
+                        checkIcon.classList.add('hidden');
+                        button.classList.remove('text-green-500');
+                        button.classList.add('text-gray-400', 'hover:text-gray-600');
+                    }, 2000);
+                }
+            } catch (err) {
+                console.error('Failed to copy text:', err);
+            }
+        }
+
+        // Copy button templates
+        const copyButtonTemplate = (url, tooltip = 'Copy URL') => `
+            <button onclick="event.preventDefault(); handleCopy('${url.replace(/'/g, "\\'")}', this)" 
+                    class="copy-button text-gray-400 hover:text-gray-600 transition-colors duration-200" 
+                    title="${tooltip}">
+                <svg class="h-5 w-5 copy-icon" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z"></path>
+                    <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z"></path>
+                </svg>
+                <svg class="h-5 w-5 check-icon hidden text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                </svg>
+            </button>
+        `;
+
+        // Function to handle URL shortener result copying
+        function copyShortUrl() {
+            const shortUrlInput = document.getElementById('shortUrl');
+            if (shortUrlInput) {
+                const copyButton = document.querySelector('#result button');
+                handleCopy(shortUrlInput.value, copyButton);
+            }
+        }
+
+        // Initialize Firebase with your config
         const firebaseConfig = {
             apiKey: "{{ firebase_config.apiKey }}",
             authDomain: "{{ firebase_config.authDomain }}",
             projectId: "{{ firebase_config.projectId }}",
             appId: "{{ firebase_config.appId }}"
         };
+
+        // Initialize Firebase
         firebase.initializeApp(firebaseConfig);
         const auth = firebase.auth();
 
+        // Set up auth state observer
+        auth.onAuthStateChanged(async (user) => {
+            if (user) {
+                globalAuthState.user = user;
+                globalAuthState.isAuthenticated = true;
+                try {
+                    globalAuthState.token = await user.getIdToken(true);
+                    setupAuthenticatedUI();
+                    loadPreviousLinks();
+                } catch (error) {
+                    console.error('Error getting token:', error);
+                    handleAuthError(error);
+                }
+            } else {
+                globalAuthState.user = null;
+                globalAuthState.token = null;
+                globalAuthState.isAuthenticated = false;
+                setupUnauthenticatedUI();
+            }
+        });
+
+        // Token refresh mechanism
+        setInterval(async () => {
+            if (globalAuthState.user) {
+                try {
+                    globalAuthState.token = await globalAuthState.user.getIdToken(true);
+                } catch (error) {
+                    console.error('Error refreshing token:', error);
+                    handleAuthError(error);
+                }
+            }
+        }, 10 * 60 * 1000); // Refresh token every 10 minutes
+
+        // API request interceptor
+        async function authenticatedFetch(url, options = {}) {
+            if (!globalAuthState.isAuthenticated) {
+                throw new Error('User not authenticated');
+            }
+
+            const headers = {
+                ...options.headers,
+                'Authorization': `Bearer ${globalAuthState.token}`
+            };
+
+            try {
+                const response = await fetch(url, { ...options, headers });
+                if (response.status === 401) {
+                    // Token might be expired, try to refresh
+                    globalAuthState.token = await globalAuthState.user.getIdToken(true);
+                    headers.Authorization = `Bearer ${globalAuthState.token}`;
+                    return fetch(url, { ...options, headers });
+                }
+                return response;
+            } catch (error) {
+                console.error('API request failed:', error);
+                handleAuthError(error);
+                throw error;
+            }
+        }
+
+        function handleAuthError(error) {
+            if (error.code === 'auth/id-token-expired' || 
+                error.code === 'auth/user-token-expired' ||
+                error.code === 'auth/invalid-token') {
+                auth.signOut().then(() => {
+                    window.location.reload();
+                });
+            }
+        }
+
+        function setupAuthenticatedUI() {
+            document.getElementById('shortenUrlForm').classList.remove('hidden');
+            document.getElementById('authButton').classList.add('hidden');
+            document.getElementById('signOutButton').classList.remove('hidden');
+            document.getElementById('userEmail').classList.remove('hidden');
+            document.getElementById('userEmail').textContent = globalAuthState.user.email;
+            document.getElementById('previousLinks').classList.remove('hidden');
+        }
+
+        function setupUnauthenticatedUI() {
+            document.getElementById('shortenUrlForm').classList.add('hidden');
+            document.getElementById('authButton').classList.remove('hidden');
+            document.getElementById('signOutButton').classList.add('hidden');
+            document.getElementById('userEmail').classList.add('hidden');
+            document.getElementById('result').classList.add('hidden');
+            document.getElementById('previousLinks').classList.add('hidden');
+        }
+
         // Function to load previous links
         async function loadPreviousLinks() {
+            const loadingSpinner = document.getElementById('loadingSpinner');
+            const linksTable = document.getElementById('linksTable');
+            const previousLinks = document.getElementById('previousLinks');
+            const tbody = linksTable.querySelector('tbody');
+
             try {
-                console.log('Starting loadPreviousLinks...');
-                const user = auth.currentUser;
-                if (!user) {
-                    console.log('No user found in loadPreviousLinks');
-                    return;
-                }
+                // Show loading state
+                loadingSpinner.classList.remove('hidden');
+                previousLinks.classList.add('hidden');
+                tbody.innerHTML = ''; // Clear existing rows
 
-                // Force token refresh and wait a second
-                console.log('Forcing token refresh...');
-                await user.getIdToken(true);
-                await new Promise(resolve => setTimeout(resolve, 1000));
-                
-                console.log('Getting fresh ID token...');
-                const idToken = await user.getIdToken();
-                console.log('Got fresh ID token, first 10 chars:', idToken.substring(0, 10) + '...');
-                console.log('Token length:', idToken.length);
-
-                console.log('Fetching links from server...');
-                const response = await fetch('/api/my-links', {
+                const token = await globalAuthState.user.getIdToken();
+                const response = await fetch('/api/links', {
                     headers: {
-                        'Authorization': `Bearer ${idToken}`
+                        'Authorization': `Bearer ${token}`
                     }
                 });
 
                 if (!response.ok) {
-                    const errorText = await response.text();
-                    console.error('Server response not OK:', response.status, errorText);
-                    
-                    // If token error, try one more time after a delay
-                    if (response.status === 401 && errorText.includes('Token used too early')) {
-                        console.log('Token timing issue detected, retrying after delay...');
-                        await new Promise(resolve => setTimeout(resolve, 2000));
-                        return loadPreviousLinks();
-                    }
-                    
-                    throw new Error(`Server returned ${response.status}: ${errorText}`);
+                    throw new Error('Failed to fetch links');
                 }
 
-                const links = await response.json();
-                console.log('Received links from server:', links.length);
-                const tbody = document.getElementById('previousLinksBody');
-                tbody.innerHTML = ''; // Clear existing links
-
-                if (links.length === 0) {
-                    tbody.innerHTML = `
-                        <tr>
-                            <td colspan="5" class="px-6 py-4 text-center text-gray-500">
-                                No links created yet
-                            </td>
-                        </tr>
-                    `;
-                    return;
-                }
-
-                // Function to format dates in a human-friendly way
-                const formatDate = (dateStr) => {
-                    if (!dateStr) return 'Never';
-                    const date = new Date(dateStr);
-                    const now = new Date();
-                    const diffTime = Math.abs(now - date);
-                    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-                    const diffHours = Math.floor(diffTime / (1000 * 60 * 60));
-                    const diffMinutes = Math.floor(diffTime / (1000 * 60));
-
-                    if (diffMinutes < 1) return 'Just now';
-                    if (diffMinutes < 60) return `${diffMinutes} minutes ago`;
-                    if (diffHours < 24) return `${diffHours} hours ago`;
-                    if (diffDays < 7) return `${diffDays} days ago`;
-                    
-                    return date.toLocaleDateString('en-US', { 
-                        year: 'numeric', 
-                        month: 'short', 
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                    });
-                };
-
-                links.forEach(link => {
+                const data = await response.json();
+                data.links.forEach(link => {
                     const row = document.createElement('tr');
-                    row.className = link.is_expired ? 'hover:bg-gray-50 bg-gray-50' : 'hover:bg-gray-50';
+                    row.setAttribute('data-link-id', link.id);
+                    const isExpired = link.expires_at ? new Date(link.expires_at) < new Date() : false;
                     
-                    // Format the dates
-                    const created = formatDate(link.created_at);
-                    const expires = link.expires_at ? formatDate(link.expires_at) : 'Never';
-                    const lastVisited = formatDate(link.last_visited);
+                    // Rest of your row creation code...
                     
-                    // Truncate long URLs for display
-                    const truncateUrl = (url) => {
-                        return url.length > 50 ? url.substring(0, 47) + '...' : url;
-                    };
-
-                    row.innerHTML = `
-                        <td class="px-6 py-4 whitespace-nowrap">
-                            <div class="text-sm text-gray-900" title="${link.long_url}">
-                                ${truncateUrl(link.long_url)}
-                            </div>
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap">
-                            <div class="text-sm ${link.is_expired ? 'text-gray-400' : 'text-blue-600'}">
-                                <a href="${link.short_url}" target="_blank" ${link.is_expired ? 'onclick="return false;"' : ''}>
-                                    ${link.short_url}
-                                </a>
-                                ${link.is_expired ? '<span class="ml-2 text-xs text-red-500">(Expired)</span>' : ''}
-                            </div>
-                            <div class="text-xs text-gray-500 mt-1">
-                                ${link.visits} visits · Last visited: ${lastVisited}
-                            </div>
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            ${created}
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            ${expires}
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                            <button onclick="deleteLink('${link.id}')" 
-                                    class="text-red-600 hover:text-red-900">
-                                Delete
-                            </button>
-                        </td>
-                    `;
                     tbody.appendChild(row);
                 });
+
+                // Hide loading state and show table
+                loadingSpinner.classList.add('hidden');
+                previousLinks.classList.remove('hidden');
+                linksTable.classList.remove('hidden');
             } catch (error) {
-                console.error('Error loading previous links:', error);
-                const tbody = document.getElementById('previousLinksBody');
+                console.error('Error in loadPreviousLinks:', error);
+                loadingSpinner.classList.add('hidden');
+                previousLinks.classList.remove('hidden');
+                // Show error message to user
                 tbody.innerHTML = `
                     <tr>
                         <td colspan="5" class="px-6 py-4 text-center text-red-500">
-                            Failed to load links. Please try again later.
+                            Error loading links: ${error.message}
                         </td>
                     </tr>
                 `;
@@ -307,20 +405,16 @@
                     return;
                 }
 
-                const idToken = await user.getIdToken();
-                console.log('Sending request to shorten URL:', url);
-
                 const expiry = expiryEnabled.checked ? 
                     expiryPreset.value === 'custom' ? 
                         `${customTime.value} ${customUnit.value}` : 
                         `${expiryPreset.value} minutes` : 
                     null;
 
-                const response = await fetch('/shorten', {
+                const response = await authenticatedFetch('/shorten', {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${idToken}`
+                        'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
                         url: url,
@@ -341,8 +435,30 @@
                     throw new Error(data.error);
                 }
 
-                shortUrlInput.value = data.shortened_url;
+                const shortUrl = data.shortened_url;
                 resultDiv.classList.remove('hidden');
+                resultDiv.innerHTML = `
+                    <div class="p-4 bg-gray-50 rounded-lg">
+                        <p class="text-sm text-gray-600 mb-2">Shortened URL:</p>
+                        <div class="flex items-center">
+                            <input type="text" id="shortUrl" 
+                                   class="flex-1 px-4 py-2 border rounded-lg mr-2 focus:outline-none" 
+                                   value="${shortUrl}" 
+                                   readonly>
+                            <button onclick="copyShortUrl()" 
+                                    class="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-400 flex items-center">
+                                <span>Copy</span>
+                                <svg id="checkmark" class="h-5 w-5 ml-2 copy-icon" fill="currentColor" viewBox="0 0 20 20">
+                                    <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z"></path>
+                                    <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z"></path>
+                                </svg>
+                                <svg class="h-5 w-5 ml-2 check-icon hidden text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                `;
                 
                 // Refresh the links table
                 await loadPreviousLinks();
@@ -362,37 +478,6 @@
             const signOutButton = document.getElementById('signOutButton');
             const userEmail = document.getElementById('userEmail');
 
-            // Firebase auth state change listener
-            auth.onAuthStateChanged(async (user) => {
-                console.log('Auth state changed:', user ? 'User logged in' : 'User logged out');
-                if (user) {
-                    console.log('User email:', user.email);
-                    console.log('Getting ID token...');
-                    try {
-                        const idToken = await user.getIdToken();
-                        console.log('Got ID token, first 10 chars:', idToken.substring(0, 10) + '...');
-                    } catch (e) {
-                        console.error('Error getting ID token:', e);
-                    }
-                    
-                    userEmail.textContent = user.email;
-                    userEmail.classList.remove('hidden');
-                    authButton.classList.add('hidden');
-                    signOutButton.classList.remove('hidden');
-                    document.getElementById('shortenUrlForm').classList.remove('hidden');
-                    document.getElementById('previousLinks').classList.remove('hidden');
-                    console.log('Loading previous links...');
-                    await loadPreviousLinks();
-                    console.log('Previous links loaded');
-                } else {
-                    userEmail.classList.add('hidden');
-                    authButton.classList.remove('hidden');
-                    signOutButton.classList.add('hidden');
-                    document.getElementById('shortenUrlForm').classList.add('hidden');
-                    document.getElementById('previousLinks').classList.add('hidden');
-                }
-            });
-
             // Auth button click handlers
             authButton.addEventListener('click', () => {
                 window.location.href = '/login';
@@ -406,21 +491,6 @@
                     alert('Error signing out');
                 });
             });
-
-            function copyToClipboard(url) {
-                const textToCopy = url || document.getElementById('shortUrl').value;
-                navigator.clipboard.writeText(textToCopy).then(() => {
-                    // Show a temporary success message
-                    const button = event.target;
-                    const originalText = button.textContent;
-                    button.textContent = 'Copied!';
-                    setTimeout(() => {
-                        button.textContent = originalText;
-                    }, 2000);
-                }).catch(err => {
-                    console.error('Failed to copy text: ', err);
-                });
-            }
 
             // Add event listeners for expiry options
             document.getElementById('expiryEnabled').addEventListener('change', function() {
@@ -442,26 +512,133 @@
 
             // Function to delete a link
             async function deleteLink(linkId) {
-                try {
-                    const user = auth.currentUser;
-                    if (!user) return;
+                if (!confirm('Are you sure you want to delete this link?')) {
+                    return;
+                }
 
-                    const idToken = await user.getIdToken();
-                    const response = await fetch(`/delete-link/${linkId}`, {
-                        method: 'DELETE',
+                try {
+                    const token = await globalAuthState.user.getIdToken();
+                    const response = await fetch('/api/delete_link', {
+                        method: 'POST',
                         headers: {
-                            'Authorization': `Bearer ${idToken}`
-                        }
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`
+                        },
+                        body: JSON.stringify({ link_id: linkId })
                     });
 
-                    if (response.ok) {
-                        loadPreviousLinks(); // Reload the links table
-                    } else {
-                        alert('Failed to delete link');
+                    const data = await response.json();
+                    if (!response.ok) {
+                        throw new Error(data.error);
+                    }
+
+                    // Find and remove the row with animation
+                    const row = document.querySelector(`tr[data-link-id="${linkId}"]`);
+                    if (row) {
+                        row.classList.add('fade-out');
+                        setTimeout(() => {
+                            row.remove();
+                        }, 500);
                     }
                 } catch (error) {
                     console.error('Error deleting link:', error);
-                    alert('Error deleting link');
+                    alert('Failed to delete link. Please try again.');
+                }
+            }
+
+            // Function to load previous links with loading state
+            async function loadPreviousLinks() {
+                const loadingSpinner = document.getElementById('loadingSpinner');
+                const linksTable = document.getElementById('linksTable');
+                const previousLinks = document.getElementById('previousLinks');
+                const tbody = linksTable.querySelector('tbody');
+
+                try {
+                    // Show loading state
+                    loadingSpinner.classList.remove('hidden');
+                    previousLinks.classList.add('hidden');
+                    tbody.innerHTML = ''; // Clear existing rows
+
+                    const token = await globalAuthState.user.getIdToken();
+                    const response = await fetch('/api/links', {
+                        headers: {
+                            'Authorization': `Bearer ${token}`
+                        }
+                    });
+
+                    if (!response.ok) {
+                        throw new Error('Failed to fetch links');
+                    }
+
+                    const data = await response.json();
+                    data.links.forEach(link => {
+                        const row = document.createElement('tr');
+                        row.setAttribute('data-link-id', link.id);
+                        const isExpired = link.expires_at ? new Date(link.expires_at) < new Date() : false;
+                        const rowClass = isExpired ? 'bg-gray-50 hover:bg-gray-100' : 'bg-white hover:bg-gray-50';
+                        row.className = rowClass;
+
+                        row.innerHTML = `
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                <div class="flex items-center space-x-2">
+                                    <a href="${link.original_url}" target="_blank" class="hover:text-blue-600 truncate max-w-xs" title="${link.original_url}">
+                                        ${formatUrlForDisplay(link.original_url)}
+                                    </a>
+                                    ${copyButtonTemplate(link.original_url, 'Copy original URL')}
+                                </div>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                <div class="flex items-center space-x-2">
+                                    <a href="${link.short_url}" target="_blank" class="hover:text-blue-600 ${isExpired ? 'text-gray-400' : ''}">
+                                        ${formatUrlForDisplay(link.short_url)}
+                                    </a>
+                                    ${copyButtonTemplate(link.short_url, 'Copy short URL')}
+                                </div>
+                                ${link.visits > 0 ? `<div class="text-xs text-gray-500 mt-1">${link.visits} visit${link.visits === 1 ? '' : 's'}</div>` : ''}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm ${isExpired ? 'text-gray-400' : 'text-gray-900'}">
+                                ${formatDate(link.created_at)}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm ${isExpired ? 'text-red-500 font-medium' : 'text-gray-900'}">
+                                ${formatDate(link.expires_at)}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                <button onclick="deleteLink('${link.id}')" class="text-red-600 hover:text-red-900">
+                                    Delete
+                                </button>
+                            </td>
+                        `;
+
+                        // Start countdown timer for non-expired links with expiry
+                        if (link.expires_at && !isExpired) {
+                            const expiryCell = row.querySelector('td:nth-child(4)');
+                            const updateExpiry = () => {
+                                expiryCell.textContent = formatDate(link.expires_at);
+                            };
+                            // Update every minute
+                            const timerId = setInterval(updateExpiry, 60000);
+                            // Store the timer ID on the row for cleanup
+                            row.dataset.timerId = timerId;
+                        }
+
+                        tbody.appendChild(row);
+                    });
+
+                    // Hide loading state and show table
+                    loadingSpinner.classList.add('hidden');
+                    previousLinks.classList.remove('hidden');
+                    linksTable.classList.remove('hidden');
+                } catch (error) {
+                    console.error('Error in loadPreviousLinks:', error);
+                    // Show error message to user
+                    const tbody = document.getElementById('previousLinksBody');
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="5" class="px-6 py-4 text-center text-red-500">
+                                Error loading links: ${error.message}
+                            </td>
+                        </tr>
+                    `;
                 }
             }
         });

@@ -100,23 +100,32 @@ def require_auth(f):
         app.logger.info(f'Got token from header (length: {len(id_token)})')
         
         try:
-            app.logger.info('Verifying token...')
-            # Get current server time
-            current_time = datetime.now()
-            app.logger.info(f'Current server time: {current_time.isoformat()}')
-            
-            decoded_token = auth.verify_id_token(id_token)
-            token_issued_at = datetime.fromtimestamp(decoded_token['iat'])
-            token_expires_at = datetime.fromtimestamp(decoded_token['exp'])
-            app.logger.info(f'Token issued at: {token_issued_at.isoformat()}')
-            app.logger.info(f'Token expires at: {token_expires_at.isoformat()}')
-            
-            request.user = decoded_token
+            # Verify the Firebase ID token
+            decoded_token = auth.verify_id_token(id_token, check_revoked=True)
             app.logger.info(f'Token verified for user: {decoded_token.get("email", "unknown")}')
+            
+            # Store user info in request context
+            request.user = {
+                'uid': decoded_token['uid'],
+                'email': decoded_token.get('email'),
+                'auth_time': decoded_token.get('auth_time')
+            }
+            
             return f(*args, **kwargs)
+            
+        except auth.RevokedIdTokenError:
+            app.logger.error('Token has been revoked')
+            return jsonify({'error': 'Token has been revoked'}), 401
+        except auth.ExpiredIdTokenError:
+            app.logger.error('Token has expired')
+            return jsonify({'error': 'Token has expired'}), 401
+        except auth.InvalidIdTokenError:
+            app.logger.error('Invalid token')
+            return jsonify({'error': 'Invalid token'}), 401
         except Exception as e:
-            app.logger.error(f'Authentication error: {str(e)}')
-            return jsonify({'error': str(e)}), 401
+            app.logger.error(f'Unexpected error during token verification: {str(e)}')
+            return jsonify({'error': 'Authentication failed'}), 401
+            
     return decorated_function
 
 @app.route('/login')
@@ -253,28 +262,40 @@ def get_user_links():
             data = link.to_dict()
             app.logger.debug(f'Processing link: {link.id}')
             expires_at = data.get('expires_at')
-            is_expired = False
             
-            if expires_at:
-                expiry_time = datetime.fromisoformat(expires_at)
-                is_expired = now > expiry_time
-
             links_data.append({
                 'id': link.id,
                 'short_url': f"{base_url}/{link.id}",
-                'long_url': data['long_url'],
-                'visits': data['visits'],
+                'original_url': data['long_url'],
                 'created_at': data['created_at'],
-                'last_visited': data['last_visited'] or 'Never',
                 'expires_at': expires_at,
-                'is_expired': is_expired
+                'visits': data.get('visits', 0),
+                'last_visited': data.get('last_visited')
             })
-
-        app.logger.info(f'Successfully fetched {len(links_data)} links')
+        
+        app.logger.info(f'Returning {len(links_data)} links')
         return jsonify(links_data)
+            
     except Exception as e:
-        app.logger.error(f"Error fetching user links: {str(e)}")
-        return jsonify({'error': f'Failed to fetch links: {str(e)}'}), 500
+        app.logger.error(f'Error fetching links: {str(e)}')
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/delete_link', methods=['POST'])
+@require_auth
+def delete_link():
+    try:
+        data = request.get_json()
+        link_id = data.get('link_id')
+        
+        if not link_id:
+            return jsonify({'error': 'Link ID is required'}), 400
+
+        # Delete the link from the database
+        db.collection('urls').document(link_id).delete()
+        
+        return jsonify({'success': True}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', debug=True)
